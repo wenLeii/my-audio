@@ -1,0 +1,516 @@
+<!-- 
+  ChrisWish 项目
+  节日主题的视觉动画程序，通过编程实现圣诞氛围的粒子特效与音乐结合
+  
+  功能特点：
+  - 3D旋转发光圣诞树粒子动画
+  - 交互式烟花效果（点击屏幕触发）
+  - 雪花飘落动画
+  - 背景音乐播放（Jingle Bells）
+  - 响应式设计，适配不同屏幕尺寸
+  
+  技术栈：
+  - HTML5 Canvas
+  - JavaScript
+  - CSS3 动画
+-->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Merry Christmas - Interactive Fireworks</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Great+Vibes&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%; margin: 0; padding: 0;
+      overflow: hidden;
+      background-color: #020205;
+      background: radial-gradient(circle at center 60%, #0f1c15 0%, #000000 100%);
+      user-select: none; /* 防止双击选中文本 */
+      -webkit-user-select: none;
+      touch-action: none; /* 防止移动端触摸滚动 */
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* UI Overlay */
+    .overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 10;
+    }
+    
+    .title {
+      font-family: 'Great Vibes', cursive;
+      font-size: min(12vw, 80px);
+      color: #e6c288;
+      text-shadow: 0 0 10px rgba(255, 215, 0, 0.3), 0 0 20px rgba(255, 215, 0, 0.1);
+      margin-bottom: 10px;
+      opacity: 0;
+      animation: fadeInUp 2s ease-out 1s forwards;
+      mix-blend-mode: screen;
+    }
+
+    .subtitle {
+      font-family: 'Cinzel', serif;
+      font-size: min(3vw, 14px);
+      letter-spacing: 4px;
+      color: rgba(255, 255, 255, 0.7);
+      text-transform: uppercase;
+      margin-top: -10px;
+      opacity: 0;
+      animation: fadeInUp 2s ease-out 2s forwards;
+    }
+    
+    .hint {
+      position: absolute; bottom: 80px;
+      font-family: 'Cinzel', serif; font-size: 12px; color: rgba(255,255,255,0.4);
+      animation: pulse 3s infinite;
+    }
+
+    .controls {
+      position: fixed; bottom: 20px; right: 20px;
+      z-index: 20; display: flex; gap: 10px;
+      pointer-events: auto;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 215, 0, 0.2);
+      color: #e6c288;
+      padding: 8px 16px; border-radius: 20px;
+      font-family: 'Cinzel', serif; font-size: 12px;
+      cursor: pointer; transition: all 0.3s;
+      backdrop-filter: blur(4px);
+    }
+    .btn:hover { background: rgba(255, 215, 0, 0.15); border-color: #ffd700; }
+
+    @keyframes fadeInUp {
+      from { transform: translateY(30px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 使用公开可访问的 Jingle Bells 音频 -->
+  <audio id="bgm" loop>
+    <source src="https://cdn.jsdelivr.net/gh/wenLeii/my-audio@main/jingle_bells.mp3" type="audio/mpeg">
+    您的浏览器不支持音频播放。
+  </audio>
+  
+  <canvas id="c"></canvas>
+
+  <div class="overlay">
+    <div class="title" style="margin-top: 35vh;">Merry Christmas</div>
+    <div class="subtitle">Season's Greetings & Best Wishes</div>
+    <div class="hint">Click anywhere to celebrate</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="toggleMusic">Music: Off</button>
+  </div>
+
+  <script>
+  (function(){
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', {alpha: false}); 
+    let W, H;
+    
+    // --- 配置参数 ---
+    const CONFIG = {
+      // 树参数
+      particleCount: 1800,
+      treeWidth: 0.35,
+      treeHeight: 0.75,
+      rotateSpeed: 0.003,
+      cameraZ: 600,
+      yOffset: 100, // 树在屏幕上的垂直偏移量
+      colors: {
+        leaf: ['#1a331a', '#2f4f2f', '#142614'],
+        gold: ['#C5A059', '#E6C288', '#FFE5B4'],
+        red:  ['#8B0000', '#B22222', '#DC143C'],
+        white: '#F0F8FF'
+      },
+      // 烟花参数
+      fireworkChance: 0.01, // 自动烟花概率
+      fireworkGravity: 0.04,
+      fireworkDrag: 0.96,
+      // 雪花参数
+      snowCount: 400,     
+      snowSpeedMin: 0.5,  
+      snowSpeedMax: 1.5   
+    };
+
+    // --- 状态变量 ---
+    let treeParticles = [];
+    let fireworks = [];
+    let snowParticles = [];
+    let angleY = 0;
+
+    // --- 辅助函数 ---
+    const rand = (min, max) => Math.random() * (max - min) + min;
+    const choice = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+    // --- 核心类定义 (必须放在 init 调用之前) ---
+    
+    // 雪花类
+    class Snowflake {
+      constructor() {
+        this.reset(true);
+      }
+
+      reset(initial = false) {
+        // 确保 W 和 H 已定义
+        const width = W || window.innerWidth;
+        const height = H || window.innerHeight;
+
+        this.x = Math.random() * width;
+        this.y = initial ? Math.random() * height : -10;
+        this.size = Math.random() * 2 + 0.5;
+        this.speed = rand(CONFIG.snowSpeedMin, CONFIG.snowSpeedMax);
+        this.sway = Math.random() * 0.02;
+        this.swayPhase = Math.random() * Math.PI * 2;
+        this.opacity = Math.random() * 0.5 + 0.3;
+      }
+
+      update() {
+        this.y += this.speed;
+        this.swayPhase += this.sway;
+        this.x += Math.sin(this.swayPhase) * 0.5;
+
+        if (this.y > H + 10 || this.x > W + 10 || this.x < -10) {
+          this.reset();
+        }
+      }
+
+      draw() {
+        ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // --- 业务逻辑函数 ---
+
+    function initSnow() {
+      snowParticles = [];
+      for(let i=0; i<CONFIG.snowCount; i++) {
+        snowParticles.push(new Snowflake());
+      }
+    }
+
+    function initTree() {
+      treeParticles = [];
+      // 确保使用当前画布尺寸计算
+      const baseSize = Math.min(W, H); 
+      
+      for(let i=0; i<CONFIG.particleCount; i++) {
+        const p = {};
+        let h = Math.pow(Math.random(), 0.7); 
+        const maxR = (baseSize * CONFIG.treeWidth) * h;
+        const r = maxR * Math.sqrt(Math.random()); 
+        const theta = Math.random() * Math.PI * 2;
+        
+        p.x = r * Math.cos(theta);
+        p.z = r * Math.sin(theta);
+        p.y = (h - 0.5) * (baseSize * CONFIG.treeHeight); 
+        
+        const typeRoll = Math.random();
+        if (typeRoll < 0.85) {
+          p.type = 'leaf';
+          p.color = choice(CONFIG.colors.leaf);
+          p.size = rand(2, 4);
+        } else {
+          const decoRoll = Math.random();
+          p.size = rand(4, 7);
+          if (decoRoll < 0.4) {
+            p.type = 'ball_gold'; p.color = choice(CONFIG.colors.gold); p.glow = true;
+          } else if (decoRoll < 0.7) {
+            p.type = 'ball_red'; p.color = choice(CONFIG.colors.red); p.glow = true;
+          } else if (decoRoll < 0.85) {
+            p.type = 'box'; p.color = choice(CONFIG.colors.gold);
+          } else {
+            p.type = 'cane'; p.color = '#fff'; p.size = rand(6, 9);
+          }
+        }
+        p.phase = Math.random() * Math.PI * 2;
+        treeParticles.push(p);
+      }
+      
+      // 树顶星
+      treeParticles.push({
+        x:0, z:0, y: -0.52 * (baseSize * CONFIG.treeHeight),
+        type: 'star', size: 20, color: '#FFFACD', phase: 0
+      });
+    }
+
+    // 通用烟花生成函数 (x,y,z 为世界坐标)
+    function createExplosion(x, y, z, colorSet) {
+        const particleCount = Math.floor(rand(40, 70));//粒子数量
+        const particles = [];
+        const colorPalette = colorSet || [...CONFIG.colors.gold, '#FFFFFF'];
+
+        for (let i = 0; i < particleCount; i++) {
+            const speed = rand(2.5, 5);     // 扩散速度
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(Math.random() * 2 - 1);
+            
+            particles.push({
+                x: x, y: y, z: z,
+                vx: speed * Math.sin(phi) * Math.cos(theta),
+                vy: speed * Math.sin(phi) * Math.sin(theta),
+                vz: speed * Math.cos(phi),
+                life: rand(1.5, 2.3),    // 粒子生命周期
+                decay: rand(0.008, 0.018), // 衰减速度（降低消失速度）
+                color: choice(colorPalette),
+                size: rand(1.5, 3)
+            });
+        }
+        fireworks.push(particles);
+    }
+
+    // 自动随机烟花
+    function spawnRandomFirework() {
+        const treeTop = -0.5 * (Math.min(W, H) * CONFIG.treeHeight);
+        const targetX = rand(-W/3, W/3);
+        const targetY = rand(treeTop - 150, treeTop + 50);
+        const targetZ = rand(-200, 200);
+        createExplosion(targetX, targetY, targetZ, null);
+    }
+
+    // 鼠标点击烟花
+    function spawnInteractionFirework(screenX, screenY) {
+        // 1. 确定深度 (Z)：为了让烟花看起来在树的周围，我们随机取一个深度，
+        // 或者简单地设为0（屏幕平面），但带有一定随机性会更有立体感。
+        const rz = rand(-150, 150); 
+        
+        // 2. 逆向投影 (Inverse Projection): 从屏幕坐标算出投影前的 3D 坐标
+        // 公式：screenX = W/2 + rx * scale  =>  rx = (screenX - W/2) / scale
+        const scale = CONFIG.cameraZ / (CONFIG.cameraZ + rz);
+        const rx = (screenX - W/2) / scale;
+        const ry = (screenY - H/2) / scale - CONFIG.yOffset; // 减去场景的垂直偏移
+
+        // 3. 逆向旋转 (Inverse Rotation): 将投影前的坐标逆向旋转回世界坐标
+        // 我们需要抵消当前的 angleY
+        const cos = Math.cos(-angleY);
+        const sin = Math.sin(-angleY);
+
+        // 旋转公式（注意：这里是在 X-Z 平面旋转）
+        // worldX = rx * cos - rz * sin
+        // worldZ = rx * sin + rz * cos
+        const worldX = rx * cos - rz * sin;
+        const worldZ = rx * sin + rz * cos;
+        const worldY = ry;
+
+        createExplosion(worldX, worldY, worldZ, ['#FFD700', '#FFF', '#FFA500']);
+    }
+
+    // --- 窗口大小处理 ---
+    function resize(){
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      if(snowParticles.length === 0) initSnow(); 
+      initTree();
+    }
+    window.addEventListener('resize', resize);
+
+    // --- 交互事件监听 ---
+    canvas.addEventListener('pointerdown', (e) => {
+        // 阻止默认行为（如在触摸屏上的滚动）
+        // e.preventDefault(); 
+        spawnInteractionFirework(e.clientX, e.clientY);
+        spawnInteractionFirework(e.clientX, e.clientY); // 双倍快乐（点一下爆两簇更华丽）
+    });
+
+    // --- 渲染逻辑 ---
+
+    function project(x, y, z, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const rx = x * cos - z * sin;
+      const rz = x * sin + z * cos;
+      const ry = y;
+      const perspective = CONFIG.cameraZ / (CONFIG.cameraZ + rz);
+      return {
+        x: W/2 + rx * perspective,
+        y: H/2 + ry * perspective + CONFIG.yOffset * perspective,
+        scale: perspective,
+        z: rz
+      };
+    }
+
+    function drawGlow(x, y, radius, color) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, radius * 3);
+      grad.addColorStop(0, color);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 绘制元素函数
+    function drawLeaf(x, y, size, color, alpha) {
+      ctx.globalAlpha = alpha; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    function drawBall(x, y, size, color, alpha, isGold) {
+      ctx.globalAlpha = alpha;
+      const g = ctx.createRadialGradient(x - size*0.3, y - size*0.3, 0, x, y, size);
+      g.addColorStop(0, isGold ? '#fff' : '#ffcccc');
+      g.addColorStop(0.3, color); g.addColorStop(1, '#000');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI*2); ctx.fill();
+      if(isGold && Math.random() > 0.9) {
+          ctx.fillStyle = '#fff'; ctx.fillRect(x-size, y, size*2, 1); ctx.fillRect(x, y-size, 1, size*2);
+      }
+      ctx.globalAlpha = 1;
+    }
+    function drawBox(x, y, size, color, alpha) {
+      ctx.globalAlpha = alpha; ctx.fillStyle = color;
+      ctx.fillRect(x - size, y - size, size * 2, size * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.fillRect(x - size, y - size*0.2, size*2, size*0.4);
+      ctx.fillRect(x - size*0.2, y - size, size*0.4, size*2);
+      ctx.globalAlpha = 1;
+    }
+    function drawCane(x, y, size, alpha) {
+      ctx.globalAlpha = alpha; ctx.lineWidth = size * 0.4;
+      ctx.strokeStyle = '#fff'; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); ctx.stroke();
+      ctx.strokeStyle = '#c00'; ctx.setLineDash([size*0.5, size*0.5]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(x - size*0.5, y - size, size*0.5, Math.PI, 0); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    function drawStar(x, y, size, color, alpha, time) {
+      ctx.save(); ctx.translate(x, y); ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = alpha; ctx.rotate(time * 0.5); ctx.fillStyle = color;
+      ctx.beginPath();
+      for(i=0; i<5; i++) {
+        ctx.lineTo(Math.cos((18+i*72)/180*Math.PI)*size, -Math.sin((18+i*72)/180*Math.PI)*size);
+        ctx.lineTo(Math.cos((54+i*72)/180*Math.PI)*size*0.4, -Math.sin((54+i*72)/180*Math.PI)*size*0.4);
+      }
+      ctx.closePath(); ctx.fill();
+      drawGlow(0, 0, size * 2, 'rgba(255,250,200, 0.6)'); ctx.restore();
+    }
+
+    // --- 主循环 ---
+    let time = 0;
+    function loop() {
+      requestAnimationFrame(loop);
+      time += 0.01;
+      
+      // 1. 绘制背景
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#051010'; ctx.fillRect(0, 0, W, H);
+      const bgGrad = ctx.createRadialGradient(W/2, H/2 + 50, 0, W/2, H/2 + 50, W*0.6);
+      bgGrad.addColorStop(0, 'rgba(20, 40, 30, 0.4)'); bgGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = bgGrad; ctx.fillRect(0,0,W,H);
+
+      angleY += CONFIG.rotateSpeed;
+
+      // 2. 随机触发烟花
+      if (Math.random() < CONFIG.fireworkChance) spawnRandomFirework();
+
+      // 3. 树的投影与排序
+      const treeRenderList = treeParticles.map(p => {
+        const proj = project(p.x, p.y, p.z, angleY);
+        return { ...p, rx: proj.x, ry: proj.y, scale: proj.scale, rz: proj.z };
+      });
+      treeRenderList.sort((a, b) => b.rz - a.rz);
+
+      // 4. 绘制树
+      treeRenderList.forEach(p => {
+        const size = p.size * p.scale;
+        const alpha = Math.min(1, Math.max(0.2, (p.scale - 0.2) * 2));
+        
+        if (p.type === 'leaf') drawLeaf(p.rx, p.ry, size, p.color, alpha);
+        else if (p.type.startsWith('ball')) {
+          const twinkle = 0.8 + 0.2 * Math.sin(time * 3 + p.phase);
+          drawBall(p.rx, p.ry, size * twinkle, p.color, alpha, p.type === 'ball_gold');
+          if(p.scale > 0.6 && p.glow) drawGlow(p.rx, p.ry, size * 0.8, p.color);
+        }
+        else if (p.type === 'box') drawBox(p.rx, p.ry, size, p.color, alpha);
+        else if (p.type === 'cane') drawCane(p.rx, p.ry, size, alpha);
+        else if (p.type === 'star') drawStar(p.rx, p.ry, size, p.color, 1, time);
+      });
+
+      // 5. 绘制烟花
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = fireworks.length - 1; i >= 0; i--) {
+          const particles = fireworks[i];
+          let aliveCount = 0;
+          for (let j = 0; j < particles.length; j++) {
+              const p = particles[j];
+              if (p.life <= 0) continue;
+              aliveCount++;
+              p.x += p.vx; p.y += p.vy; p.z += p.vz;
+              p.vy += CONFIG.fireworkGravity;
+              p.vx *= CONFIG.fireworkDrag; p.vy *= CONFIG.fireworkDrag; p.vz *= CONFIG.fireworkDrag;
+              p.life -= p.decay;
+              
+              const proj = project(p.x, p.y, p.z, angleY);
+              if (proj.scale <= 0) continue;
+              
+              ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.strokeStyle = p.color;
+              ctx.lineWidth = p.size * proj.scale; ctx.beginPath();
+              
+              const tailLen = 3 * proj.scale;
+              ctx.moveTo(proj.x, proj.y);
+              ctx.lineTo(proj.x - p.vx * tailLen, proj.y - p.vy * tailLen);
+              ctx.stroke();
+              
+              ctx.beginPath(); ctx.arc(proj.x, proj.y, p.size * proj.scale * 0.5, 0, Math.PI*2); ctx.fill();
+          }
+          if (aliveCount === 0) fireworks.splice(i, 1);
+      }
+      ctx.globalAlpha = 1;
+
+      // 6. 绘制雪花 (前景层)
+      ctx.globalCompositeOperation = 'source-over';
+      snowParticles.forEach(snow => {
+        snow.update();
+        snow.draw();
+      });
+    }
+
+    // --- 交互：音乐播放控制 ---
+    const btn = document.getElementById('toggleMusic');
+    const audio = document.getElementById('bgm');
+    let musicOn = false;
+
+    btn.addEventListener('click', (e) => {
+      // 防止点击按钮时触发画布烟花
+      e.stopPropagation();
+      musicOn = !musicOn;
+      if (musicOn) {
+        audio.play().then(() => {
+          btn.textContent = "Music: On ♫";
+          btn.style.borderColor = "#fff";
+        }).catch(e => {
+          console.log("Autoplay prevented:", e);
+          musicOn = false;
+          btn.textContent = "Play Failed";
+        });
+      } else {
+        audio.pause();
+        btn.textContent = "Music: Off";
+        btn.style.borderColor = "rgba(255,215,0,0.2)";
+      }
+    });
+
+    // 启动顺序：
+    resize();
+    loop();
+
+  })();
+  </script>
+</body>
+</html>
